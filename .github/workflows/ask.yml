@@ -60,7 +60,7 @@ jobs:
           # Client uses ADC from the auth step
           client = genai.Client()
           resp = client.models.generate_content(
-              model="gemini-2.5-flash",
+              model="gemini-1.5-flash",
               contents=prompt
           )
           text = resp.text or "(no text)"
