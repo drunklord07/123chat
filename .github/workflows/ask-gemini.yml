@@ -1,0 +1,77 @@
+name: Ask Gemini via Issue/PR Comments
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  id-token: write     # required for OIDC → Google Cloud
+  issues: write       # to post replies
+
+jobs:
+  ask:
+    # Only run when the comment starts with "/gemini "
+    if: startsWith(github.event.comment.body, '/gemini ')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (keyless OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: gen-lang-client-0592119202
+          workload_identity_provider: projects/372291124657/locations/global/workloadIdentityPools/github/providers/github-oidc
+          service_account: gh-actions-gemini@gen-lang-client-0592119202.iam.gserviceaccount.com
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Google Gen AI SDK
+        run: pip install --upgrade google-genai
+
+      - name: Call Gemini
+        id: gen
+        env:
+          GOOGLE_GENAI_USE_VERTEXAI: "True"
+          GOOGLE_CLOUD_PROJECT: gen-lang-client-0592119202
+          GOOGLE_CLOUD_LOCATION: global
+          RAW_COMMENT: ${{ github.event.comment.body }}
+        run: |
+          python - <<'PY'
+          import os
+          from google import genai
+
+          # Remove the "/gemini " prefix
+          prompt = os.environ["RAW_COMMENT"][8:].strip()
+
+          # Uses Application Default Credentials from the auth step
+          client = genai.Client()
+          resp = client.models.generate_content(
+              model="gemini-2.5-flash",
+              contents=prompt,
+          )
+          text = resp.text or "(no text)"
+
+          # Expose for next step
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print("answer<<EOF", file=f)
+              print(text, file=f)
+              print("EOF", file=f)
+          PY
+
+      - name: Reply with the answer
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.payload.issue.number;
+            const body = `**Gemini**:\n\n${process.env.ANSWER}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              body
+            });
+        env:
+          ANSWER: ${{ steps.gen.outputs.answer }}
